@@ -1,0 +1,6 @@
+{
+  "name": "MY CITY CONNECT",
+  "description": "Smart Civic Issue Management — Officer Command Center",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

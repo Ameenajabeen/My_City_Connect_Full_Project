@@ -1,0 +1,342 @@
+// Prisma Schema for MY CITY CONNECT / FIXMYCITY
+// Shared Civic Issue Management Backend (Citizen, Worker, Officer)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CITIZEN
+  WORKER
+  OFFICER
+  ADMIN
+}
+
+enum ComplaintCategory {
+  POTHOLE
+  DAMAGED_ROAD
+  STREETLIGHT
+  GARBAGE
+  WATER_LEAKAGE
+  DRAINAGE
+  STRAY_ANIMAL
+  PUBLIC_PROPERTY_DAMAGE
+  OTHER
+}
+
+enum ComplaintStatus {
+  SUBMITTED
+  AI_VERIFICATION
+  VERIFIED
+  DUPLICATE
+  DEPARTMENT_ASSIGNED
+  WORKER_ASSIGNED
+  IN_PROGRESS
+  WORKER_COMPLETED
+  OFFICER_VERIFICATION
+  REWORK
+  RESOLVED
+  REJECTED
+  CANCELLED
+}
+
+enum CategorySource {
+  AI
+  MANUAL
+}
+
+enum AiVerificationStatus {
+  PENDING
+  VERIFIED
+  LOW_CONFIDENCE
+  FAILED
+  NOT_CONFIGURED
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  ACCEPTED
+  ON_THE_WAY
+  ARRIVED
+  IN_ROUTE
+  IN_PROGRESS
+  VERIFICATION
+  COMPLETED
+  REASSIGNED
+  DECLINED
+  REJECTED
+}
+
+enum WorkerAvailability {
+  AVAILABLE
+  BUSY
+  OFFLINE
+  ON_LEAVE
+}
+
+model User {
+  id                String          @id @default(uuid())
+  email             String          @unique
+  phone             String?         @unique
+  passwordHash      String
+  name              String
+  role              UserRole        @default(CITIZEN)
+  preferredLanguage String          @default("en") // en, ta, hi
+  avatarUrl         String?
+  refreshToken      String?
+  deviceToken       String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  citizenProfile    CitizenProfile?
+  workerProfile     Worker?
+  officerProfile    Officer?
+  complaints        Complaint[]     @relation("CitizenComplaints")
+  notifications     Notification[]
+  feedbacks         Feedback[]
+  assignmentsCreated Assignment[] @relation("AssignmentCreatedBy")
+
+  @@index([email])
+  @@index([phone])
+}
+
+model CitizenProfile {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  address            String?
+  emergencyContact   String?
+  notificationPrefs  Json?    // e.g. { push: true, sms: true, email: false }
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Department {
+  id           String       @id @default(uuid())
+  name         String       @unique
+  code         String       @unique // PWD, ELEC, SWM, WTR, DRG, VET, GEN
+  contactEmail String?
+  contactPhone String?
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  complaints   Complaint[]
+  workers      Worker[]
+  officers     Officer[]
+}
+
+model Officer {
+  id           String      @id @default(uuid())
+  userId       String      @unique
+  badgeNumber  String?     @unique
+  departmentId String?
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department   Department? @relation(fields: [departmentId], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Worker {
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  employeeId         String?            @unique
+  departmentId       String
+  preferredLocation  String?
+  availability       WorkerAvailability @default(AVAILABLE)
+  latitude           Float?
+  longitude          Float?
+  lastLocationUpdate DateTime?
+  rating             Float              @default(5.0)
+  status             String             @default("On-duty")
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department         Department         @relation(fields: [departmentId], references: [id])
+  assignedComplaints Complaint[]        @relation("WorkerAssignedComplaints")
+  assignments        Assignment[]
+  completionProofs   CompletionProof[]
+  trackingLocations  TrackingLocation[]
+
+  @@index([departmentId])
+  @@index([availability])
+}
+
+model Complaint {
+  id                     String               @id @default(uuid())
+  complaintNumber        String               @unique // e.g., CMP-2026-1023
+  citizenId              String
+
+  // Category & AI audit fields
+  category               ComplaintCategory
+  categorySource         CategorySource       @default(MANUAL)
+  aiDetectedCategory     ComplaintCategory?
+  aiConfidence           Float?
+  aiVerificationStatus   AiVerificationStatus @default(PENDING)
+
+  description            String
+  imageUrl               String
+
+  // Geolocation
+  latitude               Float
+  longitude              Float
+  locationAccuracy       Float?
+  address                String
+  ward                   String?
+
+  // State machine
+  status                 ComplaintStatus      @default(SUBMITTED)
+  priority               ComplaintPriority    @default(MEDIUM)
+
+  // Allocation & Assignment
+  departmentId           String?
+  assignedWorkerId       String?
+
+  // Duplication
+  isDuplicate            Boolean              @default(false)
+  duplicateOfComplaintId String?
+
+   // Completion Evidence
+  completionPhotoUrl     String?
+  completionNotes        String?
+  resolutionNotes       String?
+  completedAt            DateTime?
+
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  // Relations
+  citizen                User                 @relation("CitizenComplaints", fields: [citizenId], references: [id])
+  department             Department?          @relation(fields: [departmentId], references: [id])
+  assignedWorker         Worker?              @relation("WorkerAssignedComplaints", fields: [assignedWorkerId], references: [id])
+  statusHistory          ComplaintStatusHistory[]
+  assignments            Assignment[]
+  feedbacks              Feedback[]
+  completionProofs       CompletionProof[]
+  trackingLocations      TrackingLocation[]
+
+  @@index([citizenId])
+  @@index([status])
+  @@index([category])
+  @@index([departmentId])
+  @@index([assignedWorkerId])
+  @@index([createdAt])
+  @@index([latitude, longitude])
+}
+
+model ComplaintStatusHistory {
+  id          String          @id @default(uuid())
+  complaintId String
+  status      ComplaintStatus
+  changedBy   String?         // user ID or "SYSTEM" / "AI"
+  remarks     String?
+  createdAt   DateTime        @default(now())
+
+  complaint   Complaint       @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+}
+
+model Assignment {
+  id          String           @id @default(uuid())
+  complaintId String
+  workerId    String
+  assignedBy  String           // officer/admin user ID
+  assignedByUser User?         @relation("AssignmentCreatedBy", fields: [assignedBy], references: [id])
+  status      AssignmentStatus @default(ASSIGNED)
+  assignedAt  DateTime         @default(now())
+  acceptedAt  DateTime?
+  completedAt DateTime?
+  notes       String?
+
+  complaint   Complaint        @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  worker      Worker           @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@index([workerId])
+}
+
+model CompletionProof {
+  id         String   @id @default(uuid())
+  complaintId String
+  workerId    String
+  imageUrl   String
+  latitude   Float
+  longitude  Float
+  accuracy   Float?
+  remarks    String?
+  verified   Boolean  @default(false)
+  verifiedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  worker    Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@index([workerId])
+}
+
+model TrackingLocation {
+  id          String    @id @default(uuid())
+  workerId    String
+  complaintId String?
+  latitude    Float
+  longitude   Float
+  accuracy    Float?
+  speed       Float?
+  heading     Float?
+  timestamp   DateTime  @default(now())
+
+  worker      Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  complaint   Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+
+  @@index([workerId])
+  @@index([complaintId])
+  @@index([timestamp])
+}
+
+model Notification {
+  id                 String   @id @default(uuid())
+  userId             String
+  title              String
+  message            String
+  type               String   // COMPLAINT_STATUS, ASSIGNMENT, DUPLICATE, etc.
+  relatedComplaintId String?
+  isRead             Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model Feedback {
+  id          String    @id @default(uuid())
+  complaintId String
+  citizenId   String
+  rating      Int       // 1 - 5
+  comment     String?
+  createdAt   DateTime  @default(now())
+
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  citizen     User      @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+
+  @@unique([complaintId, citizenId])
+  @@index([complaintId])
+  @@index([citizenId])
+}
